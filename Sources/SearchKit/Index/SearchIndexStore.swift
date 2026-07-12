@@ -139,9 +139,17 @@ public actor SearchIndexStore {
 
     // MARK: - Retrieval
 
-    /// Default retrieval: RRF fusion of vector KNN and FTS5/BM25, done by the
-    /// store. With a restrictive filter the store may return fewer than
-    /// `topK` rows — expected, not an error.
+    /// RRF constant for hybrid fusion. Deliberately lower than the classic 60
+    /// (which the store's own `searchHybrid` uses): with two overfetched lists
+    /// of ~40, k=60 flattens rank differences so much that a chunk sitting
+    /// mid-list in *both* branches outscores a rank-1 hit from a single
+    /// branch. k=20 keeps top ranks decisive while still rewarding agreement.
+    static let rrfK = 20.0
+
+    /// Default retrieval: RRF fusion of vector KNN and FTS5/BM25 rank lists,
+    /// fused here (not by the store) so the RRF constant stays under
+    /// SearchKit's control. With a restrictive filter fewer than `topK` rows
+    /// may come back — expected, not an error.
     public func searchHybrid(
         text: String,
         vector: [Float],
@@ -149,9 +157,42 @@ public actor SearchIndexStore {
         filter: SearchFilter = SearchFilter()
     ) async throws -> [SearchCandidate] {
         let (sql, bindings) = Self.whereFragment(for: filter)
-        return try await store.searchHybrid(text: text, vector: vector, topK: topK, where: sql, bindings: bindings).map {
-            Self.candidate(id: $0.id, content: $0.content, source: $0.source, metadata: $0.metadata,
-                           score: $0.score, vectorRank: $0.vectorRank, textRank: $0.textRank)
+        // Same overfetch the store's own hybrid uses.
+        let fetchK = min(topK * 4, VectorStore.maxTopK)
+        let vectorResults = try await store.search(vector: vector, topK: fetchK, where: sql, bindings: bindings)
+        let textResults = try await store.searchText(text, topK: fetchK, where: sql, bindings: bindings)
+
+        struct Fused {
+            let result: SearchResult
+            var score: Double
+            var vectorRank: Int?
+            var textRank: Int?
+        }
+        var fusedByID: [Int: Fused] = [:]
+        for (offset, result) in vectorResults.enumerated() {
+            let rank = offset + 1
+            fusedByID[result.id] = Fused(result: result, score: 1.0 / (Self.rrfK + Double(rank)),
+                                         vectorRank: rank, textRank: nil)
+        }
+        for (offset, result) in textResults.enumerated() {
+            let rank = offset + 1
+            let contribution = 1.0 / (Self.rrfK + Double(rank))
+            if var fused = fusedByID[result.id] {
+                fused.score += contribution
+                fused.textRank = rank
+                fusedByID[result.id] = fused
+            } else {
+                fusedByID[result.id] = Fused(result: result, score: contribution,
+                                             vectorRank: nil, textRank: rank)
+            }
+        }
+        let ranked = fusedByID.values.sorted { lhs, rhs in
+            lhs.score == rhs.score ? lhs.result.id < rhs.result.id : lhs.score > rhs.score
+        }
+        return ranked.prefix(topK).map {
+            Self.candidate(id: $0.result.id, content: $0.result.content, source: $0.result.source,
+                           metadata: $0.result.metadata, score: $0.score,
+                           vectorRank: $0.vectorRank, textRank: $0.textRank)
         }
     }
 
@@ -183,6 +224,36 @@ public actor SearchIndexStore {
             Self.candidate(id: $0.id, content: $0.content, source: $0.source, metadata: $0.metadata,
                            score: -$0.distance, rawDistance: $0.distance)
         }
+    }
+
+    // MARK: - Vector-transform state
+
+    /// Corpus centroid persisted alongside the manifest (mean-centering
+    /// transform). Nil when no centroid has been stored yet (empty or
+    /// identity-transform index). Wiping the index removes it, so a rebuilt
+    /// index always recomputes its own centroid.
+    func storedCentroid() async throws -> [Float]? {
+        let rows = try await store.query(
+            "SELECT value FROM search_manifest WHERE key = ?",
+            bindings: [.text(Self.centroidKey)]
+        )
+        guard let json = rows.first?.text("value") else { return nil }
+        guard let centroid = try? JSONDecoder().decode([Float].self, from: Data(json.utf8)),
+              centroid.count == manifest.dimension else {
+            // An unreadable centroid means the stored rows live in a vector
+            // space queries can no longer reach — same class of corruption as
+            // an undecodable manifest.
+            throw SearchSystemError.manifestDecodingFailed
+        }
+        return centroid
+    }
+
+    func storeCentroid(_ centroid: [Float]) async throws {
+        let json = String(decoding: try JSONEncoder().encode(centroid), as: UTF8.self)
+        _ = try await store.execute("""
+            INSERT INTO search_manifest(key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, bindings: [.text(Self.centroidKey), .text(json)])
     }
 
     /// First chunk of a document, for deterministic recall injection.
@@ -247,6 +318,7 @@ public actor SearchIndexStore {
     }
 
     private static let manifestKey = "embedding_space"
+    private static let centroidKey = "vector_centroid"
 
     private static func readManifest(from store: VectorStore) async throws -> EmbeddingSpaceManifest? {
         let rows = try await store.query(

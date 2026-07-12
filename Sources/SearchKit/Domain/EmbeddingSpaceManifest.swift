@@ -5,10 +5,10 @@ import Foundation
 /// pooling or transforms that produced the vectors — this manifest does.
 /// Any semantic mismatch invalidates the index (no row migration, ever).
 ///
-/// `transformIdentifier`/`transformVersion` are kept even though the
-/// `VectorTransform` stage was removed (fixed to "identity"/"v1"): a future
-/// transform declares different values and invalidation just works.
-/// See `futuras_evoluciones.md`.
+/// `transformIdentifier`/`transformVersion` record the post-embedding
+/// transform (`VectorTransformKind`) the rows were built with: a different
+/// transform declares different values and invalidation just works. Future
+/// transforms (PCA, model adaptation) are sketched in `ROADMAP.md`.
 public struct EmbeddingSpaceManifest: Sendable, Equatable, Codable {
     public let schemaVersion: Int
     public let modelIdentifier: String

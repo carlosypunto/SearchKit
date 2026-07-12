@@ -32,6 +32,12 @@ swift test --skip Benchmark --skip RealEmbedding
 # Real NLContextualEmbedding integration test — needs model assets on-device;
 # never works on the iOS Simulator, only macOS or a real device
 SEARCHKIT_REAL_EMBEDDING=1 swift test --filter RealEmbedding
+
+# Retrieval-quality evaluation (real model + the example-app corpus): prints
+# hit@5 / MRR@10 per retrieval mode and language over a gold set. Run it
+# before AND after any change to embeddings, chunking, or fusion, and append
+# the results to docs/retrieval-quality.md.
+SEARCHKIT_EVAL=1 swift test --filter Evaluation
 ```
 
 Tests use **Swift Testing** (`import Testing`, `@Suite`, `@Test`, `#expect`), not XCTest.
@@ -55,7 +61,10 @@ wires them together — start there to see the whole flow.
 - **Embedding** (`Embedding/`): `TextEmbeddingProvider` protocol, `ContextualEmbeddingProvider`
   (real, `NLContextualEmbedding`-backed, mean-pooled + L2-normalized, Latin-script model shared
   across es/en) and `EmbeddingPipeline`, which enforces that indexing and query vectors go
-  through identical steps and validates dimension against the manifest.
+  through identical steps and validates dimension against the manifest. `VectorTransformKind`
+  selects the post-embedding transform recorded in the manifest; `.meanCentering` is applied by
+  `SearchService` (not the pipeline — it needs the corpus centroid, which only exists once the
+  index does).
 - **Index** (`SearchIndexStore`): the *only* type that imports `SQLiteVecStore`. Owns two extra
   consumer tables (`search_manifest`, `indexed_documents`) alongside the store's own `chunks` /
   `chunks_fts` tables, which it never touches directly. On open it validates the persisted
@@ -81,9 +90,16 @@ wires them together — start there to see the whole flow.
 - Filters (`SearchFilter.family`/`.language`) are applied as SQL (`json_extract` on chunk
   metadata) in every retrieval mode, and applied *again* in Swift after deterministic recall
   injection, since injected candidates bypass the SQL filter.
-- `EmbeddingPipeline`'s `transformIdentifier`/`transformVersion` are vestigial (fixed to
-  `"identity"`/`"v1"`) — a post-embedding vector-transform stage was designed but removed from
-  the MVP; the manifest fields exist so a future transform can invalidate old indexes correctly.
+- The manifest's `transformIdentifier`/`transformVersion` come from the `transform:` argument
+  to `makeManifest` (`VectorTransformKind`, default `.identity`). With `.meanCentering`, the
+  corpus centroid is computed on the first full indexing pass, persisted in `search_manifest`
+  (key `vector_centroid`), and **frozen for the index generation**: incremental syncs reuse it,
+  only a rebuild recomputes it. Query and chunk vectors must go through the same centering —
+  `SearchService.queryVector(for:language:)` is the single query-side path that guarantees it.
+- Hybrid fusion (RRF, k = 20) lives in `SearchIndexStore.searchHybrid`, not in
+  `SQLiteVecStore.searchHybrid` (whose k = 60 is hardcoded): both branches are overfetched to
+  `min(topK*4, maxTopK)` and fused here so the constant stays tunable. k was chosen against the
+  `Evaluation` suite — re-run it before changing the constant.
 - `IndexDistanceMetric` (cosine/l2) is frozen into the SQLite schema by `SQLiteVecStore` itself —
   changing it always recreates the index file and forces a full re-embed, it's never migrated.
 - `ChunkingConfiguration` is part of the persisted manifest (`chunkMaxTokens`/`chunkOverlap`):
@@ -99,7 +115,8 @@ wires them together — start there to see the whole flow.
   `synonyms` map to simulate semantic matches like "automóvil" ≈ "coche" without a real model),
   `withTemporaryDatabase`, `makeDocument`, and `makeSearchStack`. Reuse these rather than
   building fixtures from scratch.
-- `BenchmarkTests` (`.tags(.benchmark)`) and `RealEmbeddingIntegrationTests` (gated on
-  `SEARCHKIT_REAL_EMBEDDING=1`) are opt-in / slow — exclude them for routine iteration with
+- `BenchmarkTests` (`.tags(.benchmark)`), `RealEmbeddingIntegrationTests` (gated on
+  `SEARCHKIT_REAL_EMBEDDING=1`) and `EvaluationTests` (gated on `SEARCHKIT_EVAL=1`) are
+  opt-in / slow — exclude them for routine iteration with
   `--skip Benchmark --skip RealEmbedding`.
 - All test files use `@testable import SearchKit`.

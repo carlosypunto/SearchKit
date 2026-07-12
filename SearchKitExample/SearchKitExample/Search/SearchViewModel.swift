@@ -43,6 +43,11 @@ final class SearchViewModel {
     init() {
         let stored = UserDefaults.standard.string(forKey: Self.metricDefaultsKey)
         distanceMetric = stored.flatMap(IndexDistanceMetric.init(rawValue:)) ?? .cosine
+        // Default to the device language: the corpus is bilingual (es/en
+        // twins of every topic), so an unfiltered search wastes half the
+        // visible slots on the other language. The user can clear the filter.
+        let deviceLanguage = Locale.current.language.languageCode?.identifier
+        languageFilter = deviceLanguage == "es" ? "es" : "en"
     }
 
     // MARK: - Lifecycle
@@ -54,7 +59,13 @@ final class SearchViewModel {
             let pipeline = EmbeddingPipeline(provider: provider)
             try await pipeline.prepare()
 
-            let manifest = await pipeline.makeManifest(distanceMetric: distanceMetric, chunking: Self.chunking)
+            // Mean-centering counters the anisotropy of the NL model's
+            // mean-pooled vectors; switching it on/off rebuilds the index.
+            let manifest = await pipeline.makeManifest(
+                distanceMetric: distanceMetric,
+                chunking: Self.chunking,
+                transform: .meanCentering
+            )
             let indexStore = try await SearchIndexStore(dbURL: Self.databaseURL(), manifest: manifest)
             let service = SearchService(
                 indexStore: indexStore,

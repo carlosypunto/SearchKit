@@ -30,6 +30,9 @@ public actor SearchService {
     private let recallPolicy: DeterministicRecallPolicy
     /// documentID → title for the current catalog, fed by `sync`.
     private var titlesByDocumentID: [String: String] = [:]
+    /// Corpus centroid for the mean-centering transform, lazily loaded from
+    /// the store (or computed by `sync` on the first full indexing pass).
+    private var cachedCentroid: [Float]?
 
     public init(
         indexStore: SearchIndexStore,
@@ -69,6 +72,10 @@ public actor SearchService {
         let pending = documents.filter { indexedHashes[$0.id] != $0.contentHash }
         let unchanged = documents.count - pending.count
 
+        // Pass 1 (the slow phase, so progress reports here): embed every
+        // pending chunk with raw provider vectors.
+        var jobs: [(document: SearchDocument, chunks: [SearchChunk], vectors: [[Float]])] = []
+        jobs.reserveCapacity(pending.count)
         for (offset, document) in pending.enumerated() {
             try Task.checkCancellation()
             let chunks = chunker.chunks(for: document)
@@ -78,11 +85,59 @@ public actor SearchService {
                 try Task.checkCancellation()
                 vectors.append(try await pipeline.vector(for: chunk.content, language: chunk.language))
             }
-            try await indexStore.reindex(document: document, chunks: chunks, vectors: vectors)
+            jobs.append((document, chunks, vectors))
             progress?(SyncProgress(completed: offset + 1, total: pending.count))
         }
 
+        // Pass 2: apply the manifest's vector transform (needs the corpus
+        // centroid, hence two passes), then reindex per document.
+        if isMeanCentering {
+            var centroid = try await currentCentroid()
+            if centroid == nil {
+                // First full indexing pass of this index generation: freeze
+                // the centroid of everything being indexed. Incremental syncs
+                // reuse it; only a rebuild recomputes it.
+                centroid = VectorTransform.centroid(of: jobs.flatMap(\.vectors))
+                if let centroid {
+                    try await indexStore.storeCentroid(centroid)
+                    cachedCentroid = centroid
+                }
+            }
+            if let centroid {
+                for index in jobs.indices {
+                    jobs[index].vectors = jobs[index].vectors.map {
+                        VectorTransform.meanCenter($0, centroid: centroid)
+                    }
+                }
+            }
+        }
+        for job in jobs {
+            try Task.checkCancellation()
+            try await indexStore.reindex(document: job.document, chunks: job.chunks, vectors: job.vectors)
+        }
+
         return SyncSummary(indexed: pending.count, removed: removed, unchanged: unchanged)
+    }
+
+    // MARK: - Vector transform
+
+    private var isMeanCentering: Bool {
+        indexStore.manifest.transformIdentifier == VectorTransformKind.meanCentering.identifier
+    }
+
+    private func currentCentroid() async throws -> [Float]? {
+        if cachedCentroid == nil {
+            cachedCentroid = try await indexStore.storedCentroid()
+        }
+        return cachedCentroid
+    }
+
+    /// Embeds a query and applies the manifest's transform, so query vectors
+    /// live in the same space as the indexed chunk vectors.
+    private func queryVector(for query: String, language: String?) async throws -> [Float] {
+        let raw = try await pipeline.vector(for: query, language: language)
+        guard isMeanCentering, let centroid = try await currentCentroid() else { return raw }
+        return VectorTransform.meanCenter(raw, centroid: centroid)
     }
 
     // MARK: - Query
@@ -129,7 +184,7 @@ public actor SearchService {
 
         case .vector:
             // Forced: embedding errors propagate, FTS is never touched.
-            let vector = try await pipeline.vector(for: query, language: nil)
+            let vector = try await queryVector(for: query, language: filter.language)
             return (try await indexStore.searchVector(vector, topK: topK, filter: filter), .vectorOnly)
 
         case .text:
@@ -143,7 +198,7 @@ public actor SearchService {
 
         case .hybrid:
             guard let ftsQuery else { throw SearchSystemError.textQueryUnusable }
-            let vector = try await pipeline.vector(for: query, language: nil)
+            let vector = try await queryVector(for: query, language: filter.language)
             do {
                 return (try await indexStore.searchHybrid(text: ftsQuery, vector: vector, topK: topK, filter: filter), .hybrid)
             } catch where isInvalidTextQueryError(error) {
@@ -160,9 +215,12 @@ public actor SearchService {
         let topK = options.topK
         let filter = options.filter
 
+        // The language filter doubles as the query's embedding hint: language
+        // auto-detection on short query strings is unreliable, and indexed
+        // chunks were embedded with an explicit hint.
         let vector: [Float]
         do {
-            vector = try await pipeline.vector(for: query, language: nil)
+            vector = try await queryVector(for: query, language: filter.language)
         } catch {
             // Embedding unavailable: lexical-only fallback.
             guard let ftsQuery else { throw error }

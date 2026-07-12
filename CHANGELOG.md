@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `VectorTransformKind` and the `transform:` parameter on
+  `EmbeddingPipeline.makeManifest` (default `.identity`, preserving 0.1.0 behavior).
+  `.meanCentering` subtracts the corpus centroid from every indexed and query vector and
+  re-L2-normalizes, countering the anisotropy of mean-pooled contextual embeddings. The
+  centroid is computed on the first full indexing pass, persisted next to the manifest,
+  and frozen for the lifetime of the index generation (incremental syncs reuse it; a
+  rebuild recomputes it). Enabling or disabling the transform is a manifest mismatch, so
+  existing indexes wipe and rebuild — a one-time full re-embed, by design.
+- Opt-in retrieval-quality evaluation suite (`SEARCHKIT_EVAL=1 swift test --filter
+  Evaluation`): hit@5 and MRR@10 per retrieval mode and language over a gold set grounded
+  in the example-app corpus.
+
+### Changed
+
+- Query embeddings now use the search filter's language as the embedding hint (indexing
+  always used the chunk's explicit language; auto-detection on short query strings is
+  unreliable).
+- `FTSQuerySanitizer` drops es/en stopwords and single-character tokens before building
+  the OR query; stopword-only queries fall back to the raw tokens.
+- Hybrid retrieval fuses the vector and BM25 rank lists in `SearchIndexStore` with
+  RRF k = 20 instead of delegating to `SQLiteVecStore.searchHybrid` (k = 60): with two
+  overfetched lists of ~4×topK, k = 60 flattens ranks enough that a chunk sitting
+  mid-list in both branches outscores a rank-1 single-branch hit.
+- Example app: mean-centering enabled, and the language filter defaults to the device
+  language (the bilingual corpus otherwise fills half the visible slots with the
+  other-language twin of every result).
+
 ## [0.1.0] - 2026-07-12
 
 ### Added
