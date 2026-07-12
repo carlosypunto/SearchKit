@@ -119,7 +119,7 @@ struct SearchTests {
             id: 1, documentID: "doc-x", title: "Guía de Docker", language: "es",
             family: "devops", ordinal: 0, content: "Guía de Docker\n\ncontenedores", score: 0
         )
-        let result = try await policy.apply(
+        let result = await policy.apply(
             query: "guia de docker",
             candidates: [],
             titles: ["doc-x": "Guía de Docker"],
