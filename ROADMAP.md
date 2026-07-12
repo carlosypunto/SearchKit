@@ -1,30 +1,17 @@
 # Roadmap
 
-Release plan and deferred designs. Retrieval-quality numbers backing these
-decisions live in [`docs/retrieval-quality.md`](docs/retrieval-quality.md);
-day-to-day conventions live in `AGENTS.md`.
+**Future work only.** Shipped releases live in `CHANGELOG.md`; the
+retrieval-quality numbers backing these decisions live in
+[`docs/retrieval-quality.md`](docs/retrieval-quality.md). When a release
+ships, its section is **deleted** from this file (the CHANGELOG entry is the
+record) — see the release checklist in `AGENTS.md`, which exists so no
+document goes stale.
 
-## 0.1.1 — retrieval quality (imminent, no breaking changes)
+## 0.2.0 — simplification pass (next, breaking changes allowed)
 
-Everything listed under `[Unreleased]` in the CHANGELOG. Summary:
-
-- Opt-in evaluation suite (`SEARCHKIT_EVAL=1 swift test --filter Evaluation`):
-  hit@5 / MRR@10 per retrieval mode over the example-app corpus.
-- `VectorTransformKind` with `.meanCentering` (corpus centroid persisted and
-  frozen per index generation) — counters embedding anisotropy. Additive:
-  default `.identity` preserves 0.1.0 behavior.
-- Hybrid RRF fusion moved into `SearchIndexStore` with k = 20 (the store's
-  hardcoded k = 60 flattened ranks too much for two lists of ~40).
-- `FTSQuerySanitizer` drops es/en stopwords and single-character tokens.
-- Query embeddings take the search filter's language as embedding hint.
-- Example app: mean-centering on; language filter defaults to device language.
-
-Measured effect (hybrid + language filter, the demo's default path):
-hit@5 88.9% → 94.4%, MRR@10 0.752 → 0.770.
-
-## 0.2.0 — simplification pass (right after 0.1.1, breaking changes allowed)
-
-Candidates, to be decided once 0.1.1 ships — this is a working list, not a
+Context: 0.1.1 shipped the retrieval-quality work (mean-centering, RRF k = 20,
+FTS stopwords, evaluation suite — see the CHANGELOG). 0.2.0 is the cleanup
+that work enabled. Candidates, to be decided — a working list, not a
 commitment:
 
 - **Make `.meanCentering` the default** in `EmbeddingPipeline.makeManifest`.

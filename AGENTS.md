@@ -42,6 +42,25 @@ SEARCHKIT_EVAL=1 swift test --filter Evaluation
 
 Tests use **Swift Testing** (`import Testing`, `@Suite`, `@Test`, `#expect`), not XCTest.
 
+## Releasing
+
+Every step touches a document — skipping one leaves it stale, so run the whole
+list in order:
+
+1. Gates: `swift test` (all suites) and `SEARCHKIT_EVAL=1 swift test --filter
+   Evaluation`. If anything retrieval-related changed, append the eval row to
+   `docs/retrieval-quality.md`.
+2. `CHANGELOG.md`: rename `[Unreleased]` to `[X.Y.Z] - date`; add a fresh empty
+   `## [Unreleased]` header above it.
+3. `README.md`: bump the `exact:` version in the install snippet.
+4. `ROADMAP.md`: delete the shipped release's section — the CHANGELOG entry is
+   the record; the roadmap holds future work only.
+5. Commit (`Prepare X.Y.Z release`), annotated tag `X.Y.Z` (bare version, no
+   `v` prefix — matches 0.1.0/0.1.1), push branch + tag, then
+   `gh release create X.Y.Z --title "X.Y.Z" --notes "… See CHANGELOG.md for details."`.
+
+`Package.swift` carries no version — nothing else references it.
+
 ## Architecture
 
 Pipeline, in order: `CatalogRepository` → `ChunkingService` → `EmbeddingPipeline` →
