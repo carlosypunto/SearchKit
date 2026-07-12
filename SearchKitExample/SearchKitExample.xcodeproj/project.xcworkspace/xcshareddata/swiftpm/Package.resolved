@@ -1,0 +1,15 @@
+{
+  "originHash" : "755fdfd140b6ccf3f191d770aad3ebbbd76798d5c7dbb3f1d29dc5681b7ebbde",
+  "pins" : [
+    {
+      "identity" : "sqliteveckit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/carlosypunto/SQLiteVecKit",
+      "state" : {
+        "revision" : "5addc9c3c1f53e724700bc5345f7405e4093193a",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

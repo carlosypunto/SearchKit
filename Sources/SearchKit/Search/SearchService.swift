@@ -1,0 +1,188 @@
+import Foundation
+
+/// Result of an incremental catalog sync.
+public struct SyncSummary: Sendable, Equatable {
+    public let indexed: Int
+    public let removed: Int
+    public let unchanged: Int
+
+    public init(indexed: Int, removed: Int, unchanged: Int) {
+        self.indexed = indexed
+        self.removed = removed
+        self.unchanged = unchanged
+    }
+}
+
+/// Progress callback payload for `sync`.
+public struct SyncProgress: Sendable, Equatable {
+    public let completed: Int
+    public let total: Int
+}
+
+/// Orchestrates the whole consumer pipeline: incremental indexing (diff by
+/// content hash), query embedding, hybrid retrieval, controlled fallbacks
+/// and deterministic recall.
+public actor SearchService {
+
+    private let indexStore: SearchIndexStore
+    private let pipeline: EmbeddingPipeline
+    private let chunker: ChunkingService
+    private let recallPolicy: DeterministicRecallPolicy
+    /// documentID → title for the current catalog, fed by `sync`.
+    private var titlesByDocumentID: [String: String] = [:]
+
+    public init(
+        indexStore: SearchIndexStore,
+        pipeline: EmbeddingPipeline,
+        chunker: ChunkingService = ChunkingService(),
+        recallPolicy: DeterministicRecallPolicy = DeterministicRecallPolicy()
+    ) {
+        self.indexStore = indexStore
+        self.pipeline = pipeline
+        self.chunker = chunker
+        self.recallPolicy = recallPolicy
+    }
+
+    // MARK: - Indexing
+
+    /// Incrementally syncs the index with the catalog: only new or modified
+    /// documents (by content hash) are re-embedded and reingested; documents
+    /// missing from the catalog are removed.
+    @discardableResult
+    public func sync(
+        documents: [SearchDocument],
+        progress: (@Sendable (SyncProgress) -> Void)? = nil
+    ) async throws -> SyncSummary {
+        try await pipeline.prepare()
+
+        titlesByDocumentID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0.title) })
+
+        let indexedHashes = try await indexStore.indexedContentHashes()
+        let catalogIDs = Set(documents.map(\.id))
+
+        var removed = 0
+        for staleID in indexedHashes.keys where !catalogIDs.contains(staleID) {
+            try await indexStore.removeDocument(id: staleID)
+            removed += 1
+        }
+
+        let pending = documents.filter { indexedHashes[$0.id] != $0.contentHash }
+        let unchanged = documents.count - pending.count
+
+        for (offset, document) in pending.enumerated() {
+            try Task.checkCancellation()
+            let chunks = chunker.chunks(for: document)
+            var vectors: [[Float]] = []
+            vectors.reserveCapacity(chunks.count)
+            for chunk in chunks {
+                try Task.checkCancellation()
+                vectors.append(try await pipeline.vector(for: chunk.content, language: chunk.language))
+            }
+            try await indexStore.reindex(document: document, chunks: chunks, vectors: vectors)
+            progress?(SyncProgress(completed: offset + 1, total: pending.count))
+        }
+
+        return SyncSummary(indexed: pending.count, removed: removed, unchanged: unchanged)
+    }
+
+    // MARK: - Query
+
+    /// Searches with the given options. In `.auto` mode degradation is
+    /// controlled (embedding failure → lexical-only, FTS syntax failure or no
+    /// usable terms → vector-only); forced modes surface their failures.
+    public func search(_ query: String, options: SearchOptions = SearchOptions()) async throws -> SearchOutcome {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw SearchSystemError.emptyQuery }
+
+        let ftsQuery = FTSQuerySanitizer.sanitize(trimmed)
+        let raw = try await retrieve(query: trimmed, ftsQuery: ftsQuery, options: options)
+
+        let withRecall = try await recallPolicy.apply(
+            query: trimmed,
+            candidates: raw.candidates,
+            titles: titlesByDocumentID,
+            fetchFirstChunk: { [indexStore] documentID in
+                try await indexStore.firstChunk(documentID: documentID)
+            }
+        )
+        // Recall injection bypasses the SQL filter; re-validate the final list.
+        let candidates = Self.deduplicated(withRecall).filter { options.filter.allows($0) }
+        return SearchOutcome(candidates: candidates, mode: raw.mode, requestedMode: options.mode)
+    }
+
+    /// Convenience for auto-mode searches with default options.
+    public func search(_ query: String, topK: Int) async throws -> SearchOutcome {
+        try await search(query, options: SearchOptions(topK: topK))
+    }
+
+    private func retrieve(
+        query: String,
+        ftsQuery: String?,
+        options: SearchOptions
+    ) async throws -> (candidates: [SearchCandidate], mode: RetrievalMode) {
+        let topK = options.topK
+        let filter = options.filter
+
+        switch options.mode {
+        case .auto:
+            return try await retrieveAuto(query: query, ftsQuery: ftsQuery, options: options)
+
+        case .vector:
+            // Forced: embedding errors propagate, FTS is never touched.
+            let vector = try await pipeline.vector(for: query, language: nil)
+            return (try await indexStore.searchVector(vector, topK: topK, filter: filter), .vectorOnly)
+
+        case .text:
+            // Forced: works even when the embedding model is unavailable.
+            guard let ftsQuery else { throw SearchSystemError.textQueryUnusable }
+            do {
+                return (try await indexStore.searchText(ftsQuery, topK: topK, filter: filter), .textOnly)
+            } catch where isInvalidTextQueryError(error) {
+                throw SearchSystemError.textQueryUnusable
+            }
+
+        case .hybrid:
+            guard let ftsQuery else { throw SearchSystemError.textQueryUnusable }
+            let vector = try await pipeline.vector(for: query, language: nil)
+            do {
+                return (try await indexStore.searchHybrid(text: ftsQuery, vector: vector, topK: topK, filter: filter), .hybrid)
+            } catch where isInvalidTextQueryError(error) {
+                throw SearchSystemError.textQueryUnusable
+            }
+        }
+    }
+
+    private func retrieveAuto(
+        query: String,
+        ftsQuery: String?,
+        options: SearchOptions
+    ) async throws -> (candidates: [SearchCandidate], mode: RetrievalMode) {
+        let topK = options.topK
+        let filter = options.filter
+
+        let vector: [Float]
+        do {
+            vector = try await pipeline.vector(for: query, language: nil)
+        } catch {
+            // Embedding unavailable: lexical-only fallback.
+            guard let ftsQuery else { throw error }
+            return (try await indexStore.searchText(ftsQuery, topK: topK, filter: filter), .textOnly)
+        }
+
+        guard let ftsQuery else {
+            // Nothing lexically usable in the query (e.g. only punctuation).
+            return (try await indexStore.searchVector(vector, topK: topK, filter: filter), .vectorOnly)
+        }
+
+        do {
+            return (try await indexStore.searchHybrid(text: ftsQuery, vector: vector, topK: topK, filter: filter), .hybrid)
+        } catch where isInvalidTextQueryError(error) {
+            return (try await indexStore.searchVector(vector, topK: topK, filter: filter), .vectorOnly)
+        }
+    }
+
+    private static func deduplicated(_ candidates: [SearchCandidate]) -> [SearchCandidate] {
+        var seen = Set<Int>()
+        return candidates.filter { seen.insert($0.id).inserted }
+    }
+}
