@@ -1,5 +1,5 @@
 import Foundation
-internal import NaturalLanguage
+@preconcurrency internal import NaturalLanguage
 
 /// `NLContextualEmbedding`-backed provider. A single Latin-script model serves
 /// both Spanish and English in one vector space, so the whole catalog lives in
