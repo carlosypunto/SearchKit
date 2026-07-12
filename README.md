@@ -20,7 +20,7 @@ dependencies: [
 ]
 ```
 
-SearchKit itself depends on [`SQLiteVecKit`](https://github.com/carlosypunto/SQLiteVecKit) (`main` branch), pulled transitively via SPM.
+SearchKit itself depends on [`SQLiteVecKit`](https://github.com/carlosypunto/SQLiteVecKit) (pinned to `0.1.0`), pulled transitively via SPM.
 
 ## Quick start
 
