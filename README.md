@@ -1,5 +1,10 @@
 # SearchKit
 
+![CI](https://github.com/carlosypunto/SearchKit/actions/workflows/ci.yml/badge.svg)
+![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
+![Platforms](https://img.shields.io/badge/platforms-iOS%2017%2B%20%7C%20macOS%2014%2B-blue)
+![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen)
+
 On-device RAG (retrieval-augmented generation) consumer layer for a documentation-corpus search app, written in Swift. SearchKit owns everything domain-specific — catalog ingestion, chunking, embedding, hybrid retrieval, deterministic recall and prompt construction — on top of [`SQLiteVecKit`](https://github.com/carlosypunto/SQLiteVecKit)'s `SQLiteVecStore`, which provides the SQLite vector + FTS5 storage.
 
 Everything runs locally: embeddings come from Apple's `NLContextualEmbedding` (Natural Language framework), storage is a single SQLite file, and the final prompt is handed to whatever LLM the caller chooses. No network calls are made by this package.
