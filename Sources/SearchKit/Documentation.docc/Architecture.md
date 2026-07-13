@@ -29,10 +29,15 @@ SearchKit is organized as a pipeline of small, independently testable stages.
 
 1. The query is embedded through the same ``EmbeddingPipeline`` and retrieved from
    ``SearchIndexStore`` in the requested ``SearchMode``.
-2. ``DeterministicRecallPolicy`` runs *after* retrieval: an exact (case/diacritic-insensitive)
+2. The configured ``Reranker`` (default ``NoOpReranker``) reorders the fused candidate
+   list — an extension point for expensive per-candidate signals such as an on-device
+   cross-encoder. It runs before deterministic recall and the final dedup + filter
+   re-validation, so it can neither suppress an exact-title injection nor resurrect
+   filtered-out candidates.
+3. ``DeterministicRecallPolicy`` runs *after* the reranker: an exact (case/diacritic-insensitive)
    title match must appear in results even if hybrid retrieval missed it. Injected
    candidates are re-validated against the request's ``SearchFilter``.
-3. ``PromptBuilder`` — a pure function, no store access, no LLM call — turns the final
+4. ``PromptBuilder`` — a pure function, no store access, no LLM call — turns the final
    candidates into a grounded RAG prompt.
 
 ## Search modes and controlled degradation

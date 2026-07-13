@@ -14,8 +14,8 @@ The pipeline has two halves, each built from small, independently testable stage
 
 - **Indexing**: ``CatalogRepository`` → ``ChunkingService`` → ``EmbeddingPipeline`` →
   ``SearchIndexStore``
-- **Querying**: ``SearchService`` → ``SearchIndexStore`` → ``DeterministicRecallPolicy`` →
-  ``PromptBuilder``
+- **Querying**: ``SearchService`` → ``SearchIndexStore`` → ``Reranker`` →
+  ``DeterministicRecallPolicy`` → ``PromptBuilder``
 
 ``SearchService`` is the only orchestrator that wires them together. See
 <doc:Architecture> for the pipeline in detail and the invariants to respect when changing
@@ -61,6 +61,8 @@ things.
 - ``SearchFilter``
 - ``SearchCandidate``
 - ``RetrievalMode``
+- ``Reranker``
+- ``NoOpReranker``
 - ``DeterministicRecallPolicy``
 - ``PromptBuilder``
 

@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-13
+
 ### Added
 
+- `Reranker` protocol and `NoOpReranker` default: an additive extension point
+  for post-retrieval reordering of the fused candidate list (e.g. an on-device
+  cross-encoder). `SearchService.init` takes `reranker:` (default
+  `NoOpReranker()`, behavior unchanged) and invokes it between retrieval and
+  deterministic recall, so a reranker can never suppress an exact-title
+  injection or resurrect filtered-out candidates.
 - Complete symbol-level API documentation: every public type, initializer,
   method, property, and enum case now documents its parameters, return value,
   and thrown errors.
@@ -18,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SQLiteVecKit dependency bumped to `0.1.1` (documentation-only upstream release:
+  expanded inline DocC; no API or on-disk changes).
 - `EmbeddingPipeline.makeManifest()` now defaults to `.meanCentering`. Existing
   indexes built with the previous `.identity` default invalidate and rebuild once;
   callers that intentionally need raw provider vectors can still pass

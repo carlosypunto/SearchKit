@@ -80,6 +80,7 @@ vector 19.2 / 26.9 / 30.8 / 0.236 · text+lf 65.4 / 69.2 / 69.2 / 0.673.
 | 2026-07-13 | k=10, unweighted | 46.2 / 65.4 / 69.2 / 0.559 |
 | 2026-07-13 | **weighted RRF wV=0.5, k=10 (shipped)** | 53.8 / 69.2 / 69.2 / 0.615 |
 | 2026-07-13 | wV=0.25, k=10 | 53.8 / 69.2 / 69.2 / 0.615 |
+| 2026-07-13 | + `Reranker` hook, `NoOpReranker` default (**0.2.0**) | 53.8 / 69.2 / 69.2 / 0.615 |
 
 wV=0.25 adds nothing over wV=0.5, so the milder weight ships (it leaves the
 vector branch more say on corpora where it is stronger).

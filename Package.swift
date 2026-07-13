@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "SearchKit", targets: ["SearchKit"])
     ],
     dependencies: [
-        .package(url: "https://github.com/carlosypunto/SQLiteVecKit", exact: "0.1.0")
+        .package(url: "https://github.com/carlosypunto/SQLiteVecKit", exact: "0.1.1")
     ],
     targets: [
         .target(

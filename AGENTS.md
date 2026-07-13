@@ -7,7 +7,7 @@ Guidance for AI coding agents (opencode, Codex, Cursor, Claude Code) working in 
 `SearchKit` is a Swift Package: the on-device RAG (retrieval-augmented generation) consumer
 layer for a documentation-corpus search app. It sits on top of `SQLiteVecStore` (from the sibling
 package `SQLiteVecKit`, pulled via SPM from `https://github.com/carlosypunto/SQLiteVecKit`,
-`main` branch) and owns everything domain-specific: catalog ingestion, chunking, embedding,
+pinned `exact: 0.1.1`) and owns everything domain-specific: catalog ingestion, chunking, embedding,
 hybrid retrieval, and prompt construction. `SQLiteVecStore` itself is out of scope here — treat
 it as an external dependency, not code to modify.
 
@@ -72,7 +72,7 @@ list in order:
 
 Pipeline, in order: `CatalogRepository` → `ChunkingService` → `EmbeddingPipeline` →
 `SearchIndexStore` (sync/indexing), and `SearchService` → `SearchIndexStore` →
-`DeterministicRecallPolicy` (query). Each stage is a separate, independently testable type;
+`Reranker` → `DeterministicRecallPolicy` (query). Each stage is a separate, independently testable type;
 `SearchService` (`Sources/SearchKit/Search/SearchService.swift`) is the only orchestrator that
 wires them together — start there to see the whole flow.
 
@@ -102,7 +102,11 @@ wires them together — start there to see the whole flow.
   (hybrid → vector-only on FTS syntax failure or no usable terms → text-only on embedding
   failure), while forced modes (`.hybrid`/`.vector`/`.text`) surface their failures instead of
   falling back. `FTSQuerySanitizer` quotes every token so FTS5 operators/punctuation in free user
-  text can never break the query. `DeterministicRecallPolicy` is a testable, explicit rule
+  text can never break the query. `Reranker` (default `NoOpReranker`) is an additive extension
+  point invoked on the fused candidate list between retrieval and deterministic recall — recall,
+  dedup and filter re-validation all run after it, so a reranker can neither suppress an
+  exact-title injection nor resurrect filtered-out candidates.
+  `DeterministicRecallPolicy` is a testable, explicit rule
   layered *after* retrieval: an exact (case/diacritic-insensitive) title match must appear in
   results even if hybrid retrieval missed it — injected candidates are re-validated against the
   request's `SearchFilter` before being returned. `PromptBuilder` is a pure function (no store,

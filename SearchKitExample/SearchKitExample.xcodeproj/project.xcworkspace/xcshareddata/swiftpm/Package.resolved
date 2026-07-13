@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/carlosypunto/SQLiteVecKit",
       "state" : {
-        "revision" : "5addc9c3c1f53e724700bc5345f7405e4093193a",
-        "version" : "0.1.0"
+        "revision" : "07c446657c25a521ab88475fa1bb899b4d19f5eb",
+        "version" : "0.1.1"
       }
     }
   ],

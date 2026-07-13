@@ -94,7 +94,8 @@ func makeSearchStack(
     provider: FakeEmbeddingProvider = FakeEmbeddingProvider(),
     chunking: ChunkingConfiguration = ChunkingConfiguration(),
     metric: IndexDistanceMetric = .cosine,
-    transform: VectorTransformKind = .identity
+    transform: VectorTransformKind = .identity,
+    reranker: any Reranker = NoOpReranker()
 ) async throws -> SearchStack {
     let pipeline = EmbeddingPipeline(provider: provider)
     let manifest = await pipeline.makeManifest(distanceMetric: metric, chunking: chunking, transform: transform)
@@ -102,7 +103,8 @@ func makeSearchStack(
     let service = SearchService(
         indexStore: indexStore,
         pipeline: pipeline,
-        chunker: ChunkingService(configuration: chunking)
+        chunker: ChunkingService(configuration: chunking),
+        reranker: reranker
     )
     return SearchStack(service: service, indexStore: indexStore, pipeline: pipeline)
 }

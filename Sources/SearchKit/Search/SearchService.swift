@@ -31,13 +31,14 @@ public struct SyncProgress: Sendable, Equatable {
 }
 
 /// Orchestrates the whole consumer pipeline: incremental indexing (diff by
-/// content hash), query embedding, hybrid retrieval, controlled fallbacks
-/// and deterministic recall.
+/// content hash), query embedding, hybrid retrieval, controlled fallbacks,
+/// reranking and deterministic recall.
 public actor SearchService {
 
     private let indexStore: SearchIndexStore
     private let pipeline: EmbeddingPipeline
     private let chunker: ChunkingService
+    private let reranker: any Reranker
     private let recallPolicy: DeterministicRecallPolicy
     /// documentID → title for the current catalog, fed by `sync`.
     private var titlesByDocumentID: [String: String] = [:]
@@ -53,16 +54,21 @@ public actor SearchService {
     ///     store was opened with, so query vectors match the indexed space.
     ///   - chunker: Chunking service; its configuration must match the
     ///     manifest's chunking window.
+    ///   - reranker: Post-retrieval reordering stage, invoked on the fused
+    ///     candidate list before deterministic recall. Defaults to
+    ///     ``NoOpReranker`` (retrieval order untouched).
     ///   - recallPolicy: Post-retrieval exact-title injection rule.
     public init(
         indexStore: SearchIndexStore,
         pipeline: EmbeddingPipeline,
         chunker: ChunkingService = ChunkingService(),
+        reranker: any Reranker = NoOpReranker(),
         recallPolicy: DeterministicRecallPolicy = DeterministicRecallPolicy()
     ) {
         self.indexStore = indexStore
         self.pipeline = pipeline
         self.chunker = chunker
+        self.reranker = reranker
         self.recallPolicy = recallPolicy
     }
 
@@ -188,7 +194,8 @@ public actor SearchService {
     /// - Throws: `SearchSystemError.emptyQuery` for whitespace-only input;
     ///   `SearchSystemError.textQueryUnusable` when a forced `.text`/`.hybrid`
     ///   query has no usable FTS terms; embedding/storage errors that the
-    ///   requested mode does not degrade around.
+    ///   requested mode does not degrade around; any error thrown by the
+    ///   configured ``Reranker``.
     public func search(_ query: String, options: SearchOptions = SearchOptions()) async throws -> SearchOutcome {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw SearchSystemError.emptyQuery }
@@ -196,9 +203,14 @@ public actor SearchService {
         let ftsQuery = FTSQuerySanitizer.sanitize(trimmed)
         let raw = try await retrieve(query: trimmed, ftsQuery: ftsQuery, options: options)
 
+        // Reranking happens before deterministic recall (which keeps the last
+        // word on exact-title injection) and before the final dedup + filter
+        // re-validation, so a reranker can never resurrect filtered candidates.
+        let reranked = try await reranker.rerank(query: trimmed, candidates: raw.candidates)
+
         let withRecall = try await recallPolicy.apply(
             query: trimmed,
-            candidates: raw.candidates,
+            candidates: reranked,
             titles: titlesByDocumentID,
             fetchFirstChunk: { [indexStore] documentID in
                 try await indexStore.firstChunk(documentID: documentID)

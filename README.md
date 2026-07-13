@@ -22,11 +22,11 @@ Add SearchKit to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/carlosypunto/SearchKit", exact: "0.1.1")
+    .package(url: "https://github.com/carlosypunto/SearchKit", exact: "0.2.0")
 ]
 ```
 
-SearchKit itself depends on [`SQLiteVecKit`](https://github.com/carlosypunto/SQLiteVecKit) (pinned to `0.1.0`), pulled transitively via SPM.
+SearchKit itself depends on [`SQLiteVecKit`](https://github.com/carlosypunto/SQLiteVecKit) (pinned to `0.1.1`), pulled transitively via SPM.
 
 ## Quick start
 
@@ -71,10 +71,10 @@ let prompt = PromptBuilder().prompt(
 
 ```
 Indexing:  CatalogRepository → ChunkingService → EmbeddingPipeline → SearchIndexStore
-Querying:  SearchService → SearchIndexStore → DeterministicRecallPolicy → PromptBuilder
+Querying:  SearchService → SearchIndexStore → Reranker → DeterministicRecallPolicy → PromptBuilder
 ```
 
-Each stage is a separate, independently testable type. `SearchService` is the only orchestrator that wires them together — start there to see the whole flow. Design invariants (score scales, filter re-validation, manifest invalidation) are documented in [`AGENTS.md`](AGENTS.md) and in the DocC catalog (`Sources/SearchKit/Documentation.docc`).
+Each stage is a separate, independently testable type. `SearchService` is the only orchestrator that wires them together — start there to see the whole flow. The `Reranker` protocol (default: `NoOpReranker`) is an extension point for post-retrieval reordering of the fused candidate list — e.g. an on-device cross-encoder; it runs before deterministic recall and the final filter re-validation, so it can never suppress an exact-title injection or resurrect filtered-out candidates. Design invariants (score scales, filter re-validation, manifest invalidation) are documented in [`AGENTS.md`](AGENTS.md) and in the DocC catalog (`Sources/SearchKit/Documentation.docc`).
 
 The rendered API documentation is published at
 [carlosypunto.github.io/SearchKit](https://carlosypunto.github.io/SearchKit/documentation/searchkit/)
