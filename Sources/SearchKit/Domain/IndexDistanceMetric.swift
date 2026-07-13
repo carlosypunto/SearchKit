@@ -5,6 +5,8 @@ import Foundation
 /// Changing the metric recreates the index file (the store freezes it into
 /// the SQLite schema) and forces a full re-embed on the next sync.
 public enum IndexDistanceMetric: String, Sendable, CaseIterable, Equatable {
+    /// Cosine distance — the right choice for L2-normalized embeddings.
     case cosine
+    /// Euclidean (L2) distance.
     case l2
 }

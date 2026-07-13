@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Complete symbol-level API documentation: every public type, initializer,
+  method, property, and enum case now documents its parameters, return value,
+  and thrown errors.
+- `docs.yml` workflow (mirrors SQLiteVecKit's): DocC build with
+  `--warnings-as-errors` as a gate on pushes and PRs, and automatic publishing
+  of the rendered catalog to GitHub Pages on every push to `main`.
+
 ### Changed
 
 - `EmbeddingPipeline.makeManifest()` now defaults to `.meanCentering`. Existing

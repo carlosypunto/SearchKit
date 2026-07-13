@@ -10,22 +10,51 @@ import Foundation
 /// transform declares different values and invalidation just works. Future
 /// transforms (PCA, model adaptation) are sketched in `ROADMAP.md`.
 public struct EmbeddingSpaceManifest: Sendable, Equatable, Codable {
+    /// Version of the manifest layout itself (not of the vector space).
     public let schemaVersion: Int
+    /// Identifier of the embedding model that produced the vectors.
     public let modelIdentifier: String
+    /// Revision of the embedding model.
     public let modelRevision: String
+    /// Number of components per vector.
     public let dimension: Int
+    /// ``IndexDistanceMetric`` raw value frozen into the store schema.
     public let distanceMetric: String
+    /// How languages map to models, e.g. "latin-script-shared" (one
+    /// Latin-script model covering both es and en).
     public let languageStrategy: String
+    /// Token-to-sentence pooling recipe, e.g. "mean-pooling+l2norm:v1".
     public let poolingStrategy: String
+    /// Identifier of the ``VectorTransformKind`` the rows were built with.
     public let transformIdentifier: String
+    /// Version of the post-embedding transform.
     public let transformVersion: String
     /// Chunking window that produced the indexed rows. Chunking changes are
     /// invisible to the per-document `contentHash` diff, so they must
     /// invalidate through the manifest like any other semantic mismatch.
     public let chunkMaxTokens: Int
+    /// Token overlap between consecutive chunks.
     public let chunkOverlap: Int
+    /// When the manifest was created. Ignored by ``isCompatible(with:)``.
     public let createdAt: Date
 
+    /// Creates a manifest. Prefer
+    /// ``EmbeddingPipeline/makeManifest(languageStrategy:distanceMetric:chunking:transform:)``,
+    /// which fills every field consistently from the live provider.
+    ///
+    /// - Parameters:
+    ///   - schemaVersion: Manifest layout version.
+    ///   - modelIdentifier: Embedding model identifier.
+    ///   - modelRevision: Embedding model revision.
+    ///   - dimension: Components per vector.
+    ///   - distanceMetric: ``IndexDistanceMetric`` raw value.
+    ///   - languageStrategy: Language-to-model mapping label.
+    ///   - poolingStrategy: Pooling recipe label.
+    ///   - transformIdentifier: ``VectorTransformKind`` identifier.
+    ///   - transformVersion: Post-embedding transform version.
+    ///   - chunkMaxTokens: Chunk window size in tokens.
+    ///   - chunkOverlap: Token overlap between consecutive chunks.
+    ///   - createdAt: Creation timestamp (excluded from compatibility).
     public init(
         schemaVersion: Int = 1,
         modelIdentifier: String,
@@ -56,6 +85,10 @@ public struct EmbeddingSpaceManifest: Sendable, Equatable, Codable {
 
     /// Compatibility ignores `createdAt`: two manifests describe the same
     /// vector space if every semantic field matches.
+    ///
+    /// - Parameter other: The persisted manifest to compare against.
+    /// - Returns: True when indexed rows built under `other` remain valid for
+    ///   this manifest; false means ``SearchIndexStore`` wipes and rebuilds.
     public func isCompatible(with other: EmbeddingSpaceManifest) -> Bool {
         schemaVersion == other.schemaVersion
             && modelIdentifier == other.modelIdentifier

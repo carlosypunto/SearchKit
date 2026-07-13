@@ -4,13 +4,26 @@ import Foundation
 /// store access, no LLM call — the caller forwards the prompt to a model.
 public struct PromptBuilder: Sendable {
 
+    /// Language of the prompt's fixed instructions (not of the candidates).
     public enum PromptLanguage: String, Sendable {
+        /// Spanish instructions and "No lo sé" refusal.
         case spanish = "es"
+        /// English instructions and "I don't know" refusal.
         case english = "en"
     }
 
+    /// Creates the builder (stateless).
     public init() {}
 
+    /// Builds a grounded prompt: instructions, the candidates as labeled
+    /// context blocks, and the question.
+    ///
+    /// - Parameters:
+    ///   - question: The user's question, embedded verbatim.
+    ///   - candidates: Chunks to ground the answer in; each block is labeled
+    ///     `[title — documentID#ordinal]` so answers can cite sources.
+    ///   - language: Language of the fixed instructions.
+    /// - Returns: The complete prompt, ready to send to an LLM.
     public func prompt(
         question: String,
         candidates: [SearchCandidate],

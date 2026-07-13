@@ -6,11 +6,20 @@ import Foundation
 /// rules (families, slugs, catalog relations) are post-MVP.
 public struct DeterministicRecallPolicy: Sendable {
 
+    /// Creates the policy (stateless).
     public init() {}
 
+    /// Injects exact-title matches that retrieval missed.
+    ///
     /// - Parameters:
+    ///   - query: The user's query, compared case/diacritic-insensitively
+    ///     against every title.
+    ///   - candidates: The ranked list retrieval produced.
     ///   - titles: documentID → title map for the current catalog.
-    ///   - fetchFirstChunk: loads a representative chunk for an injected document.
+    ///   - fetchFirstChunk: Loads a representative chunk for an injected document.
+    /// - Returns: `candidates`, with any missing exact-title document's first
+    ///   chunk inserted at the front. Injected candidates bypass the SQL
+    ///   filter, so `SearchService` re-validates the final list.
     public func apply(
         query: String,
         candidates: [SearchCandidate],

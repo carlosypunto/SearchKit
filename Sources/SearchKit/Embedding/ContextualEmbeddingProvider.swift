@@ -19,11 +19,19 @@ public actor ContextualEmbeddingProvider: TextEmbeddingProvider {
         self.model = model
     }
 
+    /// Identifier reported by `NLContextualEmbedding`.
     public var modelIdentifier: String { model.modelIdentifier }
+    /// Model revision reported by `NLContextualEmbedding`.
     public var modelRevision: String { String(model.revision) }
+    /// Fixed pooling recipe: mean pooling over token vectors + L2 norm.
     public var poolingStrategy: String { "mean-pooling+l2norm:v1" }
+    /// Vector size of the underlying model (512 for the Latin-script model).
     public var dimension: Int { model.dimension }
 
+    /// Requests the model assets if they are not on-device yet.
+    ///
+    /// - Throws: `SearchSystemError.embeddingAssetsUnavailable` when the
+    ///   download is denied or fails (always on the iOS Simulator).
     public func prepare() async throws {
         guard !model.hasAvailableAssets else { return }
         let result = try await model.requestAssets()
@@ -32,6 +40,18 @@ public actor ContextualEmbeddingProvider: TextEmbeddingProvider {
         }
     }
 
+    /// Embeds a text: contextual token vectors, mean-pooled into a single
+    /// sentence vector and L2-normalized.
+    ///
+    /// - Parameters:
+    ///   - text: Text to embed; must not be empty.
+    ///   - language: BCP-47-style hint ("es", "en") or nil to let the model
+    ///     infer the language. Indexing always passes the chunk's language;
+    ///     `SearchService` passes the filter's language for queries.
+    /// - Returns: L2-normalized vector of ``dimension`` elements.
+    /// - Throws: `SearchSystemError.embeddingAssetsUnavailable` when assets
+    ///   are missing; `SearchSystemError.embeddingGenerationFailed` for empty
+    ///   text, zero tokens, or a zero-norm result.
     public func embedding(for text: String, language: String?) async throws -> [Float] {
         guard !text.isEmpty else { throw SearchSystemError.embeddingGenerationFailed }
         guard model.hasAvailableAssets else { throw SearchSystemError.embeddingAssetsUnavailable }

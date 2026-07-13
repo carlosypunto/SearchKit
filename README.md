@@ -1,6 +1,7 @@
 # SearchKit
 
 ![CI](https://github.com/carlosypunto/SearchKit/actions/workflows/ci.yml/badge.svg)
+![Docs](https://github.com/carlosypunto/SearchKit/actions/workflows/docs.yml/badge.svg)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
 ![Platforms](https://img.shields.io/badge/platforms-iOS%2017%2B%20%7C%20macOS%2014%2B-blue)
 ![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen)
@@ -74,6 +75,10 @@ Querying:  SearchService → SearchIndexStore → DeterministicRecallPolicy → 
 ```
 
 Each stage is a separate, independently testable type. `SearchService` is the only orchestrator that wires them together — start there to see the whole flow. Design invariants (score scales, filter re-validation, manifest invalidation) are documented in [`AGENTS.md`](AGENTS.md) and in the DocC catalog (`Sources/SearchKit/Documentation.docc`).
+
+The rendered API documentation is published at
+[carlosypunto.github.io/SearchKit](https://carlosypunto.github.io/SearchKit/documentation/searchkit/)
+on every push to `main` (the same workflow gates PRs with `docc --warnings-as-errors`).
 
 ### Search modes
 

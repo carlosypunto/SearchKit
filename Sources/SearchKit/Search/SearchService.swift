@@ -2,10 +2,19 @@ import Foundation
 
 /// Result of an incremental catalog sync.
 public struct SyncSummary: Sendable, Equatable {
+    /// Documents (re-)embedded and reingested (new or changed content hash).
     public let indexed: Int
+    /// Documents removed because they disappeared from the catalog.
     public let removed: Int
+    /// Documents skipped because their content hash was already indexed.
     public let unchanged: Int
 
+    /// Creates a summary (returned by `SearchService.sync`; public for tests).
+    ///
+    /// - Parameters:
+    ///   - indexed: Count of (re-)ingested documents.
+    ///   - removed: Count of removed documents.
+    ///   - unchanged: Count of skipped documents.
     public init(indexed: Int, removed: Int, unchanged: Int) {
         self.indexed = indexed
         self.removed = removed
@@ -15,7 +24,9 @@ public struct SyncSummary: Sendable, Equatable {
 
 /// Progress callback payload for `sync`.
 public struct SyncProgress: Sendable, Equatable {
+    /// Pending documents embedded so far.
     public let completed: Int
+    /// Total pending documents in this sync (not the whole catalog).
     public let total: Int
 }
 
@@ -34,6 +45,15 @@ public actor SearchService {
     /// the store (or computed by `sync` on the first full indexing pass).
     private var cachedCentroid: [Float]?
 
+    /// Creates the orchestrator.
+    ///
+    /// - Parameters:
+    ///   - indexStore: The open index this service reads and writes.
+    ///   - pipeline: Embedding pipeline; must be the one whose manifest the
+    ///     store was opened with, so query vectors match the indexed space.
+    ///   - chunker: Chunking service; its configuration must match the
+    ///     manifest's chunking window.
+    ///   - recallPolicy: Post-retrieval exact-title injection rule.
     public init(
         indexStore: SearchIndexStore,
         pipeline: EmbeddingPipeline,
@@ -51,6 +71,17 @@ public actor SearchService {
     /// Incrementally syncs the index with the catalog: only new or modified
     /// documents (by content hash) are re-embedded and reingested; documents
     /// missing from the catalog are removed.
+    ///
+    /// - Parameters:
+    ///   - documents: The full current catalog (not a delta — anything absent
+    ///     here is removed from the index).
+    ///   - progress: Called after each pending document is embedded (the slow
+    ///     phase). Total counts pending documents only.
+    /// - Returns: Counts of indexed / removed / unchanged documents.
+    /// - Throws: Provider errors (`SearchSystemError.embeddingAssetsUnavailable`,
+    ///   `.embeddingGenerationFailed`, `.embeddingDimensionMismatch`), storage
+    ///   errors, and `CancellationError` — the sync checks for task
+    ///   cancellation between documents.
     @discardableResult
     public func sync(
         documents: [SearchDocument],
@@ -145,6 +176,19 @@ public actor SearchService {
     /// Searches with the given options. In `.auto` mode degradation is
     /// controlled (embedding failure → lexical-only, FTS syntax failure or no
     /// usable terms → vector-only); forced modes surface their failures.
+    ///
+    /// - Parameters:
+    ///   - query: Free user text; sanitized for FTS, so FTS5 operators and
+    ///     punctuation can never break the query.
+    ///   - options: Mode, result budget and metadata filter. The filter's
+    ///     language doubles as the query's embedding hint.
+    /// - Returns: Ranked candidates (deduplicated, filter re-validated after
+    ///   deterministic recall injection) plus the mode actually used —
+    ///   compare it with `options.mode` to detect an `.auto` degradation.
+    /// - Throws: `SearchSystemError.emptyQuery` for whitespace-only input;
+    ///   `SearchSystemError.textQueryUnusable` when a forced `.text`/`.hybrid`
+    ///   query has no usable FTS terms; embedding/storage errors that the
+    ///   requested mode does not degrade around.
     public func search(_ query: String, options: SearchOptions = SearchOptions()) async throws -> SearchOutcome {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw SearchSystemError.emptyQuery }

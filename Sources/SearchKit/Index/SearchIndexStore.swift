@@ -13,11 +13,23 @@ internal import SQLiteVecStore
 public actor SearchIndexStore {
 
     private let store: VectorStore
+    /// The vector-space description this index was opened with.
     public nonisolated let manifest: EmbeddingSpaceManifest
     /// True when opening detected an incompatible previous index and wiped it
     /// (or recreated the file after a frozen-schema mismatch).
     public nonisolated let didInvalidatePreviousIndex: Bool
 
+    /// Opens (or creates) the index file and validates it against `manifest`.
+    /// An incompatible or undecodable persisted manifest wipes the index; a
+    /// frozen-schema mismatch (dimension/metric) recreates the file. Either
+    /// way the store opens empty and ready to re-ingest — check
+    /// ``didInvalidatePreviousIndex`` to know it happened.
+    ///
+    /// - Parameters:
+    ///   - dbURL: Location of the SQLite index file.
+    ///   - manifest: Vector space the caller's pipeline produces; persisted
+    ///     on first open and compared on every subsequent one.
+    /// - Throws: Storage errors from creating/opening the file or its tables.
     public init(dbURL: URL, manifest: EmbeddingSpaceManifest) async throws {
         let store: VectorStore
         var invalidated = false
@@ -79,6 +91,9 @@ public actor SearchIndexStore {
     // MARK: - Indexing
 
     /// Document IDs currently indexed, with their content hash.
+    ///
+    /// - Returns: documentID → contentHash for every indexed document; the
+    ///   input for `SearchService.sync`'s diff.
     public func indexedContentHashes() async throws -> [String: String] {
         let rows = try await store.query("SELECT document_id, content_hash FROM indexed_documents")
         var hashes: [String: String] = [:]
@@ -91,6 +106,15 @@ public actor SearchIndexStore {
     }
 
     /// Replaces a whole document: `delete(source:)` + `insertBatch` + bookkeeping.
+    /// Idempotent thanks to deterministic chunk IDs.
+    ///
+    /// - Parameters:
+    ///   - document: The document being (re-)ingested.
+    ///   - chunks: Its chunks, from `ChunkingService`.
+    ///   - vectors: One vector per chunk, already carrying the manifest's
+    ///     transform (mean-centering happens in `SearchService`, before this).
+    /// - Throws: `SearchSystemError.embeddingDimensionMismatch` when
+    ///   `chunks.count != vectors.count`; storage errors otherwise.
     public func reindex(document: SearchDocument, chunks: [SearchChunk], vectors: [[Float]]) async throws {
         guard chunks.count == vectors.count else {
             throw SearchSystemError.embeddingDimensionMismatch(expected: chunks.count, got: vectors.count)
@@ -124,15 +148,24 @@ public actor SearchIndexStore {
     }
 
     /// Removes a document that disappeared from the catalog.
+    ///
+    /// - Parameter id: Identifier of the document whose chunks to delete.
     public func removeDocument(id: String) async throws {
         try await store.delete(source: id)
         _ = try await store.execute("DELETE FROM indexed_documents WHERE document_id = ?", bindings: [.text(id)])
     }
 
+    /// Total number of indexed chunks (all documents).
+    ///
+    /// - Returns: The row count of the store's chunk table.
     public func chunkCount() async throws -> Int {
         try await store.count()
     }
 
+    /// Number of indexed chunks belonging to one document.
+    ///
+    /// - Parameter documentID: Identifier of the document to count.
+    /// - Returns: The document's chunk count; 0 when it is not indexed.
     public func chunkCount(documentID: String) async throws -> Int {
         try await store.count(source: documentID)
     }
@@ -157,10 +190,21 @@ public actor SearchIndexStore {
     static let rrfTextWeight = 1.0
     static let rrfVectorWeight = 0.5
 
-    /// Default retrieval: RRF fusion of vector KNN and FTS5/BM25 rank lists,
-    /// fused here (not by the store) so the RRF constant stays under
+    /// Default retrieval: weighted RRF fusion of the vector KNN and FTS5/BM25
+    /// rank lists, fused here (not by the store) so the constants stay under
     /// SearchKit's control. With a restrictive filter fewer than `topK` rows
     /// may come back — expected, not an error.
+    ///
+    /// - Parameters:
+    ///   - text: Sanitized FTS5 query (from `FTSQuerySanitizer`).
+    ///   - vector: Query vector, already in the indexed space (same transform
+    ///     as the chunk vectors).
+    ///   - topK: Maximum candidates to return; both branches overfetch 4×.
+    ///   - filter: Metadata filter applied to both branches in SQL.
+    /// - Returns: Fused candidates, best first. `score` is the weighted RRF
+    ///   sum; `vectorRank`/`textRank` carry each branch's 1-based rank.
+    /// - Throws: Storage errors, including the store's invalid-FTS-query
+    ///   error that `.auto` mode degrades around.
     public func searchHybrid(
         text: String,
         vector: [Float],
@@ -212,6 +256,13 @@ public actor SearchIndexStore {
     }
 
     /// Vector-only retrieval. Score = −distance; `rawDistance` keeps the raw value.
+    ///
+    /// - Parameters:
+    ///   - vector: Query vector, already in the indexed space.
+    ///   - topK: Maximum candidates to return (overfetched 4× when filtered,
+    ///     because the store applies the filter after KNN selection).
+    ///   - filter: Metadata filter applied in SQL.
+    /// - Returns: Nearest chunks, best (smallest distance) first.
     public func searchVector(
         _ vector: [Float],
         topK: Int,
@@ -229,6 +280,13 @@ public actor SearchIndexStore {
     }
 
     /// Lexical-only retrieval. Score = −BM25; `rawDistance` keeps the raw value.
+    ///
+    /// - Parameters:
+    ///   - text: Sanitized FTS5 query (from `FTSQuerySanitizer`).
+    ///   - topK: Maximum candidates to return.
+    ///   - filter: Metadata filter applied in SQL.
+    /// - Returns: BM25-ranked chunks, best first.
+    /// - Throws: Storage errors, including the store's invalid-FTS-query error.
     public func searchText(
         _ text: String,
         topK: Int,
@@ -272,6 +330,10 @@ public actor SearchIndexStore {
     }
 
     /// First chunk of a document, for deterministic recall injection.
+    ///
+    /// - Parameter documentID: Identifier of the document to represent.
+    /// - Returns: The chunk with ordinal 0 as a zero-score candidate, or nil
+    ///   when the document is not indexed.
     public func firstChunk(documentID: String) async throws -> SearchCandidate? {
         let id = ChunkingService.stableChunkID(documentID: documentID, ordinal: 0)
         guard let entry = try await store.fetch(id: id) else { return nil }

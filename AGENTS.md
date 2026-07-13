@@ -39,6 +39,11 @@ SEARCHKIT_REAL_EMBEDDING=1 swift test --filter RealEmbedding
 # gold set. Run it before AND after any change to embeddings, chunking, or
 # fusion, and append the results to docs/retrieval-quality.md.
 SEARCHKIT_EVAL=1 swift test --filter Evaluation
+
+# Docs gate (same command CI's docs.yml runs): any docc warning — unresolved
+# ``symbol`` link, malformed directive — fails the build.
+xcodebuild docbuild -scheme SearchKit -destination 'generic/platform=macOS' \
+  -derivedDataPath /tmp/docbuild OTHER_DOCC_FLAGS='--warnings-as-errors'
 ```
 
 Tests use **Swift Testing** (`import Testing`, `@Suite`, `@Test`, `#expect`), not XCTest.
@@ -48,9 +53,10 @@ Tests use **Swift Testing** (`import Testing`, `@Suite`, `@Test`, `#expect`), no
 Every step touches a document — skipping one leaves it stale, so run the whole
 list in order:
 
-1. Gates: `swift test` (all suites) and `SEARCHKIT_EVAL=1 swift test --filter
-   Evaluation`. If anything retrieval-related changed, append the eval row to
-   `docs/retrieval-quality.md`.
+1. Gates: `swift test` (all suites), `SEARCHKIT_EVAL=1 swift test --filter
+   Evaluation`, and the docs gate (`xcodebuild docbuild` with
+   `--warnings-as-errors`, see Commands). If anything retrieval-related
+   changed, append the eval row to `docs/retrieval-quality.md`.
 2. `CHANGELOG.md`: rename `[Unreleased]` to `[X.Y.Z] - date`; add a fresh empty
    `## [Unreleased]` header above it.
 3. `README.md`: bump the `exact:` version in the install snippet.
