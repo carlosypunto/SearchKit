@@ -9,8 +9,10 @@ import Testing
 ///
 ///     SEARCHKIT_EVAL=1 swift test --filter Evaluation
 ///
-/// Reports hit@5 and MRR@10 per forced retrieval mode (vector / text / hybrid)
-/// and per language over a hand-built gold set. The printed table is the
+/// Reports hit@1/3/5 and MRR@10 per retrieval mode (vector / text / hybrid,
+/// plus `.auto` — the demo app's path, asserted to never silently degrade)
+/// and per language over a hand-built gold set, then a per-query rank table
+/// so marginal hits (rank 4–5) are visible. The printed tables are the
 /// deliverable; assertions are loose sanity floors only. Use it as a baseline
 /// before and after any change to embeddings, chunking, or fusion.
 @Suite(
@@ -25,7 +27,10 @@ struct EvaluationTests {
         let query: String
         let expectedDocumentID: String
         let language: String
-        /// "title" | "paraphrase" | "lexical" — what the query is probing.
+        /// "title" | "paraphrase" | "lexical" | "stem-free" — what the query
+        /// is probing. "stem-free" queries share no exact token with their
+        /// target document (verified against FTS5 unicode61 folding), so BM25
+        /// cannot find them — they isolate the vector branch's contribution.
         let kind: String
     }
 
@@ -47,6 +52,13 @@ struct EvaluationTests {
         GoldQuery(query: "withTaskGroup addTask", expectedDocumentID: "es-task-groups", language: "es", kind: "lexical"),
         // Spanish — morphological variant ("reentrada" in the body).
         GoldQuery(query: "actores reentrantes", expectedDocumentID: "es-actors", language: "es", kind: "lexical"),
+        // Spanish — stem-free paraphrases (zero exact-token overlap with the
+        // target doc; BM25-blind by construction, only the vector branch can
+        // score the target directly).
+        GoldQuery(query: "trabajar con datos que quizá no estén presentes", expectedDocumentID: "es-optionals", language: "es", kind: "stem-free"),
+        GoldQuery(query: "convertir oraciones en listas de decimales comparables", expectedDocumentID: "es-embeddings", language: "es", kind: "stem-free"),
+        GoldQuery(query: "guardar un trozo de lógica para ejecutarlo luego", expectedDocumentID: "es-closures", language: "es", kind: "stem-free"),
+        GoldQuery(query: "reaccionar cuando una operación sale mal y avisar a quien llama", expectedDocumentID: "es-error-handling", language: "es", kind: "stem-free"),
 
         // English — exact title.
         GoldQuery(query: "Hybrid Search with Reciprocal Rank Fusion", expectedDocumentID: "en-hybrid-search", language: "en", kind: "title"),
@@ -58,7 +70,12 @@ struct EvaluationTests {
         // English — exact/lexical terms.
         GoldQuery(query: "subword tokenization rare words", expectedDocumentID: "en-tokenization", language: "en", kind: "lexical"),
         GoldQuery(query: "rebase versus merge", expectedDocumentID: "en-git-branching", language: "en", kind: "lexical"),
-        GoldQuery(query: "chunk overlap sliding window", expectedDocumentID: "en-chunking", language: "en", kind: "lexical")
+        GoldQuery(query: "chunk overlap sliding window", expectedDocumentID: "en-chunking", language: "en", kind: "lexical"),
+        // English — stem-free paraphrases (see the Spanish block).
+        GoldQuery(query: "turn a phrase into numbers whose distance reflects its meaning", expectedDocumentID: "en-embeddings", language: "en", kind: "stem-free"),
+        GoldQuery(query: "a piece of behavior that remembers surrounding variables", expectedDocumentID: "en-closures", language: "en", kind: "stem-free"),
+        GoldQuery(query: "put an application and everything it needs inside a lightweight box", expectedDocumentID: "en-docker", language: "en", kind: "stem-free"),
+        GoldQuery(query: "recovering when something goes wrong at runtime", expectedDocumentID: "en-error-handling", language: "en", kind: "stem-free")
     ]
 
     // MARK: - Corpus loading
@@ -90,15 +107,24 @@ struct EvaluationTests {
     struct ModeReport {
         let mode: SearchMode
         let languageFiltered: Bool
-        var hits5 = 0
-        var reciprocalRanks: [Double] = []
-        var perLanguageHits5: [String: Int] = [:]
-        var perLanguageCounts: [String: Int] = [:]
+        /// Rank (1-based) of the expected document per gold query, aligned
+        /// with `goldSet` order; nil = absent from the top 10.
+        var ranks: [Int?] = []
         var misses: [(GoldQuery, top: [String])] = []
 
-        var count: Int { reciprocalRanks.count }
-        var hitAt5: Double { count == 0 ? 0 : Double(hits5) / Double(count) }
-        var mrrAt10: Double { count == 0 ? 0 : reciprocalRanks.reduce(0, +) / Double(count) }
+        var label: String { mode.rawValue + (languageFiltered ? "+lf" : "") }
+        var count: Int { ranks.count }
+
+        func hitRate(at cutoff: Int, language: String? = nil) -> Double {
+            let scoped = zip(goldSet, ranks).filter { language == nil || $0.0.language == language }
+            guard !scoped.isEmpty else { return 0 }
+            let hits = scoped.count { if let rank = $0.1 { rank <= cutoff } else { false } }
+            return Double(hits) / Double(scoped.count)
+        }
+
+        var mrrAt10: Double {
+            count == 0 ? 0 : ranks.map { $0.map { 1.0 / Double($0) } ?? 0 }.reduce(0, +) / Double(count)
+        }
     }
 
     // MARK: - Test
@@ -128,8 +154,10 @@ struct EvaluationTests {
 
             // Unfiltered = raw package behavior; language-filtered = what the
             // demo app does by default (filter matches the query's language).
+            // `.auto` is the mode the demo app actually runs in; it must never
+            // silently degrade on gold queries (they all have usable FTS terms).
             var reports: [ModeReport] = []
-            for mode in [SearchMode.vector, .text, .hybrid] {
+            for mode in [SearchMode.vector, .text, .hybrid, .auto] {
                 for languageFiltered in [false, true] {
                     var report = ModeReport(mode: mode, languageFiltered: languageFiltered)
                     for gold in Self.goldSet {
@@ -138,16 +166,14 @@ struct EvaluationTests {
                             gold.query,
                             options: SearchOptions(mode: mode, topK: 10, filter: filter)
                         )
+                        if mode == .auto {
+                            #expect(outcome.mode == .hybrid,
+                                    "auto degraded to \(outcome.mode) for \"\(gold.query)\"")
+                        }
                         let ids = outcome.candidates.map(\.documentID)
                         // First rank (1-based) at which any chunk of the expected doc appears.
                         let rank = ids.firstIndex(of: gold.expectedDocumentID).map { $0 + 1 }
-
-                        report.perLanguageCounts[gold.language, default: 0] += 1
-                        if let rank, rank <= 5 {
-                            report.hits5 += 1
-                            report.perLanguageHits5[gold.language, default: 0] += 1
-                        }
-                        report.reciprocalRanks.append(rank.map { 1.0 / Double($0) } ?? 0)
+                        report.ranks.append(rank)
                         if rank == nil || rank! > 5 {
                             report.misses.append((gold, top: Array(ids.prefix(3))))
                         }
@@ -160,7 +186,7 @@ struct EvaluationTests {
 
             // Loose sanity floors — the table above is the real deliverable.
             for report in reports {
-                #expect(report.hitAt5 > 0, "mode \(report.mode) found nothing from the gold set")
+                #expect(report.hitRate(at: 5) > 0, "mode \(report.mode) found nothing from the gold set")
             }
         }
     }
@@ -168,22 +194,36 @@ struct EvaluationTests {
     private static func printTable(_ reports: [ModeReport]) {
         func pct(_ value: Double) -> String { String(format: "%5.1f%%", value * 100) }
         func f3(_ value: Double) -> String { String(format: "%.3f", value) }
+        func pad(_ text: String, _ length: Int) -> String {
+            text.count >= length ? String(text.prefix(length)) : text.padding(toLength: length, withPad: " ", startingAt: 0)
+        }
 
         print("")
-        print("[eval] gold set: \(goldSet.count) queries — hit@5 / MRR@10")
-        print("[eval] mode         hit@5   MRR@10   es hit@5   en hit@5")
+        print("[eval] gold set: \(goldSet.count) queries — hit@k / MRR@10")
+        print("[eval] mode        hit@1   hit@3   hit@5   MRR@10   es hit@5   en hit@5")
         for report in reports {
-            let esCount = report.perLanguageCounts["es", default: 0]
-            let enCount = report.perLanguageCounts["en", default: 0]
-            let esHit = esCount == 0 ? 0 : Double(report.perLanguageHits5["es", default: 0]) / Double(esCount)
-            let enHit = enCount == 0 ? 0 : Double(report.perLanguageHits5["en", default: 0]) / Double(enCount)
-            let label = report.mode.rawValue + (report.languageFiltered ? "+lf" : "")
-            print("[eval] \(label.padding(toLength: 10, withPad: " ", startingAt: 0)) "
-                + "\(pct(report.hitAt5))  \(f3(report.mrrAt10))     \(pct(esHit))     \(pct(enHit))")
+            print("[eval] \(pad(report.label, 10)) "
+                + "\(pct(report.hitRate(at: 1)))  \(pct(report.hitRate(at: 3)))  \(pct(report.hitRate(at: 5)))  "
+                + "\(f3(report.mrrAt10))     \(pct(report.hitRate(at: 5, language: "es")))     "
+                + "\(pct(report.hitRate(at: 5, language: "en")))")
         }
+
+        // Per-query rank of the expected document ("-" = not in top 10), one
+        // column per mode variant: makes marginal hits (rank 4–5) visible,
+        // not just misses.
+        print("")
+        let header = reports.map { pad($0.label, 9) }.joined(separator: " ")
+        print("[eval] \(pad("rank of expected doc (- = not in top 10)", 53))\(header)")
+        for (index, gold) in goldSet.enumerated() {
+            let cells = reports
+                .map { $0.ranks[index].map(String.init) ?? "-" }
+                .map { pad($0, 9) }
+                .joined(separator: " ")
+            print("[eval] [\(pad(gold.kind, 9))] \(pad(gold.query, 40)) \(cells)")
+        }
+
         for report in reports where !report.misses.isEmpty {
-            let label = report.mode.rawValue + (report.languageFiltered ? "+lf" : "")
-            print("[eval] misses in \(label):")
+            print("[eval] misses in \(report.label):")
             for (gold, top) in report.misses {
                 print("[eval]   [\(gold.kind)] \"\(gold.query)\" expected \(gold.expectedDocumentID), top: \(top.joined(separator: ", "))")
             }

@@ -141,10 +141,21 @@ public actor SearchIndexStore {
 
     /// RRF constant for hybrid fusion. Deliberately lower than the classic 60
     /// (which the store's own `searchHybrid` uses): with two overfetched lists
-    /// of ~40, k=60 flattens rank differences so much that a chunk sitting
-    /// mid-list in *both* branches outscores a rank-1 hit from a single
-    /// branch. k=20 keeps top ranks decisive while still rewarding agreement.
-    static let rrfK = 20.0
+    /// of ~40, a large k flattens rank differences so much that a chunk
+    /// sitting mid-list in *both* branches outscores a rank-1 hit from a
+    /// single branch. k=10 keeps top ranks decisive while still rewarding
+    /// agreement.
+    static let rrfK = 10.0
+
+    /// Branch weights for the weighted RRF sum. On the eval gold set the
+    /// lexical branch is far stronger than the on-device vector branch
+    /// (~69% vs ~31% hit@5), so an unweighted sum lets mid-list vector noise
+    /// outvote lexical rank-1 hits. Down-weighting the vector branch keeps
+    /// its recall for semantic-only queries while protecting BM25 precision.
+    /// k and the weights were tuned together against the `Evaluation` suite
+    /// (see docs/retrieval-quality.md) — re-run it before changing either.
+    static let rrfTextWeight = 1.0
+    static let rrfVectorWeight = 0.5
 
     /// Default retrieval: RRF fusion of vector KNN and FTS5/BM25 rank lists,
     /// fused here (not by the store) so the RRF constant stays under
@@ -171,12 +182,16 @@ public actor SearchIndexStore {
         var fusedByID: [Int: Fused] = [:]
         for (offset, result) in vectorResults.enumerated() {
             let rank = offset + 1
-            fusedByID[result.id] = Fused(result: result, score: 1.0 / (Self.rrfK + Double(rank)),
-                                         vectorRank: rank, textRank: nil)
+            fusedByID[result.id] = Fused(
+                result: result,
+                score: Self.rrfVectorWeight / (Self.rrfK + Double(rank)),
+                vectorRank: rank,
+                textRank: nil
+            )
         }
         for (offset, result) in textResults.enumerated() {
             let rank = offset + 1
-            let contribution = 1.0 / (Self.rrfK + Double(rank))
+            let contribution = Self.rrfTextWeight / (Self.rrfK + Double(rank))
             if var fused = fusedByID[result.id] {
                 fused.score += contribution
                 fused.textRank = rank

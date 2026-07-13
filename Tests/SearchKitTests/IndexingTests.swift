@@ -41,7 +41,7 @@ struct IndexingTests {
             let summary = try await stack.service.sync(documents: updated)
             #expect(summary == SyncSummary(indexed: 1, removed: 0, unchanged: 2))
 
-            let outcome = try await stack.service.search("índices consultas", topK: 3)
+            let outcome = try await stack.service.search("índices consultas", options: SearchOptions(topK: 3))
             #expect(outcome.candidates.first?.documentID == "b")
         }
     }

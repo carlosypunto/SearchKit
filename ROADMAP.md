@@ -9,22 +9,19 @@ document goes stale.
 
 ## 0.2.0 — simplification pass (next, breaking changes allowed)
 
-Context: 0.1.1 shipped the retrieval-quality work (mean-centering, RRF k = 20,
-FTS stopwords, evaluation suite — see the CHANGELOG). 0.2.0 is the cleanup
-that work enabled. Candidates, to be decided — a working list, not a
-commitment:
+Context: 0.1.1 shipped the retrieval-quality work (mean-centering,
+SearchKit-side RRF fusion, FTS stopwords, evaluation suite — see the
+CHANGELOG). 0.2.0 is the cleanup that work enabled. A first slice has already
+landed on `main` and is recorded in the CHANGELOG's `[Unreleased]` section
+(`.meanCentering` as the `makeManifest` default, the `search(_:topK:)`
+overload removal, weighted RRF fusion tuned against the expanded eval gold
+set). Remaining candidates, to be decided — a working list, not a commitment:
 
-- **Make `.meanCentering` the default** in `EmbeddingPipeline.makeManifest`.
-  Behavior change: every consumer's index invalidates and rebuilds once. The
-  eval numbers justify it as the sensible default for the real model; keep
-  `.identity` available (tests and degenerate corpora need it).
 - **Revisit `EmbeddingPipeline`'s role.** After 0.1.1 it only forwards to the
   provider, validates dimension, and builds the manifest — transform
   application lives in `SearchService` (it needs index state). Options: fold
   manifest-building into `SearchService`/`SearchIndexStore`, or keep the type
   but rename/shrink its surface. Whatever reads simplest wins.
-- **Prune redundant conveniences** (e.g. `SearchService.search(_:topK:)`)
-  and any API that exists only because 0.1.0 shipped it.
 - **Reconsider the FTS stopword list's visibility** — currently an internal
   constant; decide whether consumers may need to extend it (probably not:
   additive if ever needed).
@@ -115,10 +112,10 @@ public struct NoOpReranker: Reranker {
    only; it does not need to know the filter.
 5. Wire it into the evaluation suite: a reranker is precisely the kind of
    change `docs/retrieval-quality.md` exists to measure. This is also the most
-   promising lever for the remaining quality gap — hybrid still trails
-   text-only in MRR (0.770 vs 0.972 on the current gold set) because the
-   vector branch of the on-device model is weak; a cross-encoder over ~10–50
-   candidates attacks exactly that.
+   promising lever for the remaining quality gap — the stem-free block of the
+   gold set (queries with zero token overlap with their target doc) misses
+   almost entirely in every mode because the on-device vector branch is weak
+   (~31% hit@5); a cross-encoder over ~10–50 candidates attacks exactly that.
 
 **Candidate signals:** on-device cross-encoder scoring `(query, chunk)` pairs
 (Core ML / MLX — viable because only the top candidates are scored, never the

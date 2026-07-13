@@ -36,7 +36,7 @@ import SearchKit
 //    are guaranteed to go through identical steps).
 let provider = try ContextualEmbeddingProvider(languageCode: "es")
 let pipeline = EmbeddingPipeline(provider: provider)
-let manifest = await pipeline.makeManifest() // model, dimension, pooling, metric…
+let manifest = await pipeline.makeManifest() // model, dimension, pooling, metric, mean-centering…
 
 // 2. Index store: a single SQLite file, treated as a regenerable cache.
 //    Any manifest mismatch (model change, dimension change…) wipes it.
@@ -108,6 +108,10 @@ swift test --skip Benchmark --skip RealEmbedding
 # Real NLContextualEmbedding integration test — needs model assets on-device;
 # never works on the iOS Simulator, only macOS or a real device
 SEARCHKIT_REAL_EMBEDDING=1 swift test --filter RealEmbedding
+
+# Retrieval-quality evaluation (real model + the example-app corpus; macOS or
+# a real device). Results log: docs/retrieval-quality.md
+SEARCHKIT_EVAL=1 swift test --filter Evaluation
 ```
 
 ## License

@@ -25,7 +25,10 @@ struct BenchmarkTests {
             let ingestDuration = ContinuousClock.now - ingestStart
 
             let queryStart = ContinuousClock.now
-            let outcome = try await stack.service.search("actores concurrencia palabra3", topK: 10)
+            let outcome = try await stack.service.search(
+                "actores concurrencia palabra3",
+                options: SearchOptions(topK: 10)
+            )
             let queryDuration = ContinuousClock.now - queryStart
 
             #expect(try await stack.indexStore.chunkCount() >= 500)

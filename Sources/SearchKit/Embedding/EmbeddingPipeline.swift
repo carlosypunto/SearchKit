@@ -31,12 +31,14 @@ public struct EmbeddingPipeline: Sendable {
     /// `chunking` configuration given to `ChunkingService`, so chunking
     /// changes invalidate the index like any other semantic mismatch.
     /// `transform` selects the post-embedding transform `SearchService`
-    /// applies; changing it likewise invalidates the index.
+    /// applies; changing it likewise invalidates the index. Mean-centering is
+    /// the default for real contextual embeddings; choose `.identity`
+    /// explicitly for raw provider vectors, tests or ablations.
     public func makeManifest(
         languageStrategy: String = "latin-script-shared",
         distanceMetric: IndexDistanceMetric = .cosine,
         chunking: ChunkingConfiguration = ChunkingConfiguration(),
-        transform: VectorTransformKind = .identity
+        transform: VectorTransformKind = .meanCentering
     ) async -> EmbeddingSpaceManifest {
         EmbeddingSpaceManifest(
             modelIdentifier: await provider.modelIdentifier,

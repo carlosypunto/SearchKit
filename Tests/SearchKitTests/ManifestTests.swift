@@ -5,6 +5,20 @@ import Testing
 @Suite("EmbeddingSpaceManifest")
 struct ManifestTests {
 
+    @Test func makeManifestDefaultsToMeanCentering() async {
+        let manifest = await EmbeddingPipeline(provider: FakeEmbeddingProvider()).makeManifest()
+
+        #expect(manifest.transformIdentifier == VectorTransformKind.meanCentering.identifier)
+        #expect(manifest.transformVersion == VectorTransformKind.meanCentering.version)
+    }
+
+    @Test func makeManifestCanSelectIdentityTransformExplicitly() async {
+        let manifest = await EmbeddingPipeline(provider: FakeEmbeddingProvider()).makeManifest(transform: .identity)
+
+        #expect(manifest.transformIdentifier == VectorTransformKind.identity.identifier)
+        #expect(manifest.transformVersion == VectorTransformKind.identity.version)
+    }
+
     @Test func manifestSurvivesReopen() async throws {
         try await withTemporaryDatabase { dbURL in
             let provider = FakeEmbeddingProvider()

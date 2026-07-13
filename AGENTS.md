@@ -34,9 +34,10 @@ swift test --skip Benchmark --skip RealEmbedding
 SEARCHKIT_REAL_EMBEDDING=1 swift test --filter RealEmbedding
 
 # Retrieval-quality evaluation (real model + the example-app corpus): prints
-# hit@5 / MRR@10 per retrieval mode and language over a gold set. Run it
-# before AND after any change to embeddings, chunking, or fusion, and append
-# the results to docs/retrieval-quality.md.
+# hit@1/3/5 + MRR@10 per retrieval mode (including .auto, asserted to never
+# silently degrade) and language, plus a per-query rank table, over a 26-query
+# gold set. Run it before AND after any change to embeddings, chunking, or
+# fusion, and append the results to docs/retrieval-quality.md.
 SEARCHKIT_EVAL=1 swift test --filter Evaluation
 ```
 
@@ -110,15 +111,18 @@ wires them together — start there to see the whole flow.
   metadata) in every retrieval mode, and applied *again* in Swift after deterministic recall
   injection, since injected candidates bypass the SQL filter.
 - The manifest's `transformIdentifier`/`transformVersion` come from the `transform:` argument
-  to `makeManifest` (`VectorTransformKind`, default `.identity`). With `.meanCentering`, the
+  to `makeManifest` (`VectorTransformKind`, default `.meanCentering`). With `.meanCentering`, the
   corpus centroid is computed on the first full indexing pass, persisted in `search_manifest`
   (key `vector_centroid`), and **frozen for the index generation**: incremental syncs reuse it,
   only a rebuild recomputes it. Query and chunk vectors must go through the same centering —
   `SearchService.queryVector(for:language:)` is the single query-side path that guarantees it.
-- Hybrid fusion (RRF, k = 20) lives in `SearchIndexStore.searchHybrid`, not in
-  `SQLiteVecStore.searchHybrid` (whose k = 60 is hardcoded): both branches are overfetched to
-  `min(topK*4, maxTopK)` and fused here so the constant stays tunable. k was chosen against the
-  `Evaluation` suite — re-run it before changing the constant.
+- Hybrid fusion (weighted RRF: k = 10, text weight 1.0, vector weight 0.5) lives in
+  `SearchIndexStore.searchHybrid`, not in `SQLiteVecStore.searchHybrid` (whose k = 60 is
+  hardcoded): both branches are overfetched to `min(topK*4, maxTopK)` and fused here so the
+  constants stay tunable. The vector branch is down-weighted because it is far weaker than
+  BM25 on the eval corpus and an unweighted sum lets its mid-list noise outvote lexical
+  rank-1 hits. k and the weights were tuned together against the `Evaluation` suite — re-run
+  it before changing any of them.
 - `IndexDistanceMetric` (cosine/l2) is frozen into the SQLite schema by `SQLiteVecStore` itself —
   changing it always recreates the index file and forces a full re-embed, it's never migrated.
 - `ChunkingConfiguration` is part of the persisted manifest (`chunkMaxTokens`/`chunkOverlap`):

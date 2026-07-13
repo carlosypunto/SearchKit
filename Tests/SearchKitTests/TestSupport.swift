@@ -93,10 +93,11 @@ func makeSearchStack(
     dbURL: URL,
     provider: FakeEmbeddingProvider = FakeEmbeddingProvider(),
     chunking: ChunkingConfiguration = ChunkingConfiguration(),
-    metric: IndexDistanceMetric = .cosine
+    metric: IndexDistanceMetric = .cosine,
+    transform: VectorTransformKind = .identity
 ) async throws -> SearchStack {
     let pipeline = EmbeddingPipeline(provider: provider)
-    let manifest = await pipeline.makeManifest(distanceMetric: metric, chunking: chunking)
+    let manifest = await pipeline.makeManifest(distanceMetric: metric, chunking: chunking, transform: transform)
     let indexStore = try await SearchIndexStore(dbURL: dbURL, manifest: manifest)
     let service = SearchService(
         indexStore: indexStore,

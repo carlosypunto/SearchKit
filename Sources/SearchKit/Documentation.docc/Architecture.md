@@ -58,11 +58,13 @@ and the actually used mode.
 - ``ChunkingConfiguration`` is part of the manifest (``EmbeddingSpaceManifest/chunkMaxTokens``,
   ``EmbeddingSpaceManifest/chunkOverlap``) because chunking changes are invisible to the
   per-document content-hash diff. Always pass the same configuration to ``ChunkingService``
-  and to ``EmbeddingPipeline/makeManifest(languageStrategy:distanceMetric:chunking:)``.
-- ``EmbeddingPipeline``'s `transformIdentifier`/`transformVersion` are vestigial (fixed to
-  `"identity"`/`"v1"`): a post-embedding vector-transform stage was designed but removed
-  from the MVP. The manifest fields remain so a future transform can invalidate old indexes
-  correctly.
+  and to ``EmbeddingPipeline/makeManifest(languageStrategy:distanceMetric:chunking:transform:)``.
+- ``EmbeddingPipeline`` records the selected ``VectorTransformKind`` in the manifest
+  (`transformIdentifier`/`transformVersion`). ``VectorTransformKind/meanCentering`` is the
+  default because it improves the real hybrid retrieval path; ``VectorTransformKind/identity``
+  remains available for raw provider vectors, tests and ablations. The transform is applied
+  by ``SearchService`` because mean-centering needs the corpus centroid persisted in
+  ``SearchIndexStore``.
 - ``IndexDistanceMetric`` (cosine/l2) is frozen into the SQLite schema by `SQLiteVecStore`
   itself — changing it always recreates the index file and forces a full re-embed; it is
   never migrated.

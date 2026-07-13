@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `EmbeddingPipeline.makeManifest()` now defaults to `.meanCentering`. Existing
+  indexes built with the previous `.identity` default invalidate and rebuild once;
+  callers that intentionally need raw provider vectors can still pass
+  `transform: .identity`.
+- Hybrid fusion is now weighted RRF (k = 10, text weight 1.0, vector weight 0.5;
+  previously k = 20, unweighted). The weak on-device vector branch no longer
+  dilutes lexical rank-1 hits: on the expanded eval gold set, `hybrid+lf` goes
+  from 46.2% to 53.8% hit@1 and 0.539 to 0.615 MRR@10, and the demo paraphrase
+  queries move to top 1–2 (see `docs/retrieval-quality.md`). Fusion constants
+  are not part of the manifest — no index invalidation.
+- The `Evaluation` suite now reports hit@1/hit@3 (position inside the top 5),
+  prints a per-query rank table, measures `.auto` (asserting it never silently
+  degrades), and adds 8 stem-free paraphrase queries (zero token overlap with
+  their target doc) that keep fusion tuning honest — gold set re-baselined at
+  26 queries.
+
+### Removed
+
+- Removed the redundant `SearchService.search(_:topK:)` convenience overload. Use
+  `SearchService.search(_:options:)` with `SearchOptions(topK:)`.
+
 ## [0.1.1] - 2026-07-13
 
 ### Added

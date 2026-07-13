@@ -108,7 +108,7 @@ struct SearchTests {
 
             // Diacritic/case-insensitive title match; topK=1 so competition
             // could push it out — the policy must still include it.
-            let outcome = try await stack.service.search("MECANICA DEL COCHE", topK: 1)
+            let outcome = try await stack.service.search("MECANICA DEL COCHE", options: SearchOptions(topK: 1))
             #expect(outcome.candidates.contains { $0.documentID == "coches" })
         }
     }
@@ -138,6 +138,48 @@ struct SearchTests {
             let candidate = try #require(outcome.candidates.first)
             #expect(candidate.title == "Concurrencia en Swift")
             #expect(!candidate.snippet.hasPrefix("Concurrencia en Swift"))
+        }
+    }
+
+    /// Pins the weighted-RRF fusion decision: a lexical rank-1 hit that the
+    /// vector branch ranks last must still beat a chunk sitting mid-list in
+    /// *both* branches. With the unweighted sum this inverts (text 2 + vector 1
+    /// outscores text 1 + vector 3), which is exactly how the weak vector
+    /// branch used to bury correct BM25 answers.
+    @Test func weightedFusionPrefersLexicalRank1OverMidListAgreement() async throws {
+        try await withTemporaryDatabase { dbURL in
+            let stack = try await makeSearchStack(dbURL: dbURL)
+
+            // Handcrafted vectors (dimension 64) fix the vector ranking for
+            // query vector e1: y (dist 0) < z (≈0.29) < x (1.0).
+            func vector(_ components: [(Int, Float)]) -> [Float] {
+                var vector = [Float](repeating: 0, count: 64)
+                for (index, value) in components { vector[index] = value }
+                return vector
+            }
+            // Contents fix the BM25 ranking for "alfa": x (tf=3) < y (tf=1); z absent.
+            let fixtures: [(id: String, content: String, vector: [Float])] = [
+                ("x", "alfa alfa alfa", vector([(0, 1)])),
+                ("y", "alfa beta", vector([(1, 1)])),
+                ("z", "gamma delta", vector([(1, 0.7071), (2, 0.7071)]))
+            ]
+            for fixture in fixtures {
+                let document = makeDocument(id: fixture.id, title: fixture.id, body: fixture.content)
+                let chunk = SearchChunk(
+                    id: ChunkingService.stableChunkID(documentID: fixture.id, ordinal: 0),
+                    documentID: fixture.id, title: fixture.id, language: "es",
+                    family: "general", ordinal: 0, content: fixture.content
+                )
+                try await stack.indexStore.reindex(document: document, chunks: [chunk], vectors: [fixture.vector])
+            }
+
+            let results = try await stack.indexStore.searchHybrid(text: "\"alfa\"", vector: vector([(1, 1)]), topK: 3)
+
+            let first = try #require(results.first)
+            #expect(first.documentID == "x")
+            #expect(first.textRank == 1)
+            #expect(first.vectorRank == 3)
+            #expect(results.dropFirst().first?.documentID == "y")
         }
     }
 }

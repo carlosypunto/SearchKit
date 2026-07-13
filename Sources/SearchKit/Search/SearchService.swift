@@ -165,11 +165,6 @@ public actor SearchService {
         return SearchOutcome(candidates: candidates, mode: raw.mode, requestedMode: options.mode)
     }
 
-    /// Convenience for auto-mode searches with default options.
-    public func search(_ query: String, topK: Int) async throws -> SearchOutcome {
-        try await search(query, options: SearchOptions(topK: topK))
-    }
-
     private func retrieve(
         query: String,
         ftsQuery: String?,
